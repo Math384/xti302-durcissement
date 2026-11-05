@@ -1,0 +1,15 @@
+# /etc/sudoers.d/xti302 - Exigence C3
+# Copié par installer.sh (root:root, mode 0440) après validation par visudo -cf.
+# Attention : sudo ignore les fichiers de sudoers.d dont le nom contient un point
+# ou finit par ~ : ce fichier ne doit donc pas s'appeler "xti302.conf".
+
+# Administrateurs : tous les droits, mot de passe demandé (traçabilité, protection
+# si une session SSH reste ouverte sans surveillance).
+%admins ALL=(ALL:ALL) ALL
+
+# Compte support : uniquement analyse_logs.sh, en root, et rien d'autre.
+# - chemin absolu : impossible de lancer un autre programme du même nom ;
+# - le script appartient à root et n'est modifiable que par lui (installer.sh),
+#   sinon support pourrait le réécrire et obtenir un shell root ;
+# - NOPASSWD : le compte support n'a pas de mot de passe (connexion par clé seule).
+support ALL=(root) NOPASSWD: /usr/local/sbin/analyse_logs.sh
