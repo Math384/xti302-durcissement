@@ -1,0 +1,13 @@
+login;nom;groupe_principal;groupes_secondaires
+mathurin;Mathurin;admins;acces_ssh
+gabriel;Gabriel;admins;acces_ssh
+teo;Teo;admins;acces_ssh
+support;Compte support;support;acces_ssh
+askywalker;Anakin Skywalker;technique;
+rtico;Rose Tico;technique;
+okenobi;Obi-Wan Kenobi;chercheurs;
+qjinn;Qui-Gon Jinn;chercheurs;
+lskywalker;Luke Skywalker;doctorants;
+atano;Ahsoka Tano;doctorants;
+hsolo;Han Solo;invite;acces_ssh
+lorgana;Leia Organa;invite;acces_ssh
