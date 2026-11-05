@@ -14,6 +14,10 @@
 
 set -euo pipefail
 
+# PATH fixé : ne pas dépendre de celui de l'appelant (su -c garde le PATH utilisateur,
+# sans /usr/sbin où sont useradd, groupadd...), ni exécuter un programme piégé en root
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 # --- Paramètres --------------------------------------------------------------
 
 # Dossier du dépôt = dossier qui contient ce script (fonctionne quel que soit le répertoire courant)
