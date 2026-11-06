@@ -5,7 +5,7 @@
 # Relançable sans danger : chaque étape vérifie l'état avant d'agir.
 # Étapes déjà en place : paquets, scripts, comptes (C1, C2), sudo (C3), root et homes (C4),
 #                        SSH (S1-S5), journald, nftables, fail2ban (J1-J3), mises à jour (D1),
-#                        disque et planification de la sauvegarde (B1-B3).
+#                        disque et planification de la sauvegarde (B1-B3), services inutiles (D2).
 #
 # Usage : sudo ./installer.sh   (ou en root : ./installer.sh)
 #
@@ -32,6 +32,11 @@ PAQUETS=(sudo acl openssh-server nftables fail2ban python3-systemd unattended-up
 # Second disque de la VM, réservé aux sauvegardes. Autre nom possible :
 #   sudo DISQUE_SAUVEGARDE=/dev/sdc ./installer.sh
 DISQUE_SAUVEGARDE="${DISQUE_SAUVEGARDE:-/dev/sdb}"
+
+# D2 : services réseau inutiles sur un serveur, installés quand l'installation de
+# Debian n'était pas strictement minimale. avahi-daemon (mDNS, ports 5353...) écoute
+# sur le réseau ; ModemManager pilote des modems 3G/4G absents ici.
+SERVICES_INUTILES=(avahi-daemon.socket avahi-daemon.service ModemManager.service)
 ETIQUETTE_SAUVEGARDE="sauvegardes"
 POINT_MONTAGE="/sauvegardes"
 
@@ -207,6 +212,22 @@ configurer_maj_auto() {
     info "unattended-upgrades activé (vérification quotidienne)"
 }
 
+# D2 : arrête et masque les services inutiles. "mask" plutôt que "disable" : un
+# service désactivé peut encore être démarré par un autre (activation D-Bus ou
+# socket, c'est le cas d'avahi) ; un service masqué ne peut plus démarrer du tout.
+# On ne désinstalle pas : supprimer un paquet peut entraîner la suppression d'autres.
+desactiver_services_inutiles() {
+    etape "Services inutiles (D2)"
+    local service
+    for service in "${SERVICES_INUTILES[@]}"; do
+        if systemctl list-unit-files --no-legend "$service" 2>/dev/null | grep -q .; then
+            systemctl disable --now "$service" >/dev/null 2>&1 || true
+            systemctl mask "$service" >/dev/null 2>&1
+            info "$service arrêté et masqué"
+        fi
+    done
+}
+
 # B1, B3 : second disque monté sur /sauvegardes, accessible aux seuls admins.
 # Relançable sans danger : le disque n'est formaté QUE s'il ne contient aucun
 # système de fichiers. Un disque qui contient déjà nos sauvegardes (étiquette
@@ -286,6 +307,7 @@ main() {
     configurer_pare_feu
     configurer_fail2ban
     configurer_maj_auto
+    desactiver_services_inutiles
     preparer_disque
     configurer_sauvegarde
     proteger_homes

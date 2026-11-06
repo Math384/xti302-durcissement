@@ -1,6 +1,33 @@
 # config/suid_attendus.txt - Exigence D3
-# Fichiers SUID présents sur la VM, chacun expliqué dans DOSSIER.md.
+# Fichiers SUID présents sur la VM, chacun expliqué dans DOSSIER.md (partie 2, D3).
 # verifier.sh signale tout fichier SUID absent de cette liste.
-# Liste générée sur la VM (voir README / DOSSIER), puis relue une par une :
+# Relevé sur la VM avec :
 #   findmnt -rn -o TARGET -t ext4,ext3,ext2,xfs,btrfs,vfat \
 #     | while read -r fs; do sudo find "$fs" -xdev -type f -perm -4000; done | sort -u
+
+# Comptes et mots de passe (paquet passwd / login)
+/usr/bin/chfn
+/usr/bin/chsh
+/usr/bin/gpasswd
+/usr/bin/newgrp
+/usr/bin/passwd
+/usr/bin/su
+
+# Élévation de privilèges
+/usr/bin/sudo
+/usr/bin/pkexec
+/usr/lib/polkit-1/polkit-agent-helper-1
+/usr/lib/dbus-1.0/dbus-daemon-launch-helper
+
+# Montage de systèmes de fichiers par un utilisateur
+/usr/bin/mount
+/usr/bin/umount
+/usr/bin/fusermount3
+/usr/bin/ntfs-3g
+
+# SSH
+/usr/lib/openssh/ssh-keysign
+
+# Hérités d'une installation non minimale (inutiles sur ce serveur)
+/usr/lib/xorg/Xorg.wrap
+/usr/sbin/pppd

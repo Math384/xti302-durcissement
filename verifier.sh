@@ -727,8 +727,11 @@ test_D3() {
     while read -r fs; do
         # -type f / -type d : les liens symboliques (toujours en 777) sont ignorés
         fichiers+="$(find "$fs" -xdev -type f -perm -0002 2>/dev/null)"$'\n'
+        # Répertoires temporaires exclus, avec leur contenu : les services lancés avec
+        # PrivateTmp=yes y ont leur propre /tmp (/var/tmp/systemd-private-*/tmp, 1777)
         dossiers+="$(find "$fs" -xdev -type d -perm -0002 \
-                        ! -path /tmp ! -path /var/tmp ! -path /dev/shm 2>/dev/null)"$'\n'
+                        ! -path /tmp ! -path '/tmp/*' ! -path /var/tmp ! -path '/var/tmp/*' \
+                        ! -path /dev/shm 2>/dev/null)"$'\n'
         suid+="$(find "$fs" -xdev -type f -perm -4000 2>/dev/null)"$'\n'
     done < <(systemes_de_fichiers)
     fichiers="$(grep -v '^$' <<< "$fichiers")"
