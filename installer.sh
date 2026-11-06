@@ -58,7 +58,7 @@ verifier_depot_protege() {
     local fautif
     fautif="$(find "$REPO_DIR" \( ! -user root -o -perm /022 \) -print -quit)"
     if [[ -n "$fautif" ]]; then
-        erreur "$fautif n'appartient pas à root ou est modifiable par d'autres : clonez le dépôt en root dans /opt/xti302 (voir README)" 8
+        erreur "$fautif n'appartient pas à root ou est modifiable par d'autres : clonez le dépôt en root dans /opt/xti302, ou corrigez avec chown -R root:root et chmod -R go-w (voir README)" 8
     fi
 }
 

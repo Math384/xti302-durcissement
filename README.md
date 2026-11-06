@@ -35,9 +35,13 @@ Sur la VM, connecté en SSH avec redirection d'agent (`ssh -A`) depuis le compte
 
 ```bash
 su -c "apt install -y git"
-su -c "git clone git@github.com:Math384/xti302-durcissement.git /opt/xti302"
+su -c "umask 022 && git clone git@github.com:Math384/xti302-durcissement.git /opt/xti302"
 su -c "/opt/xti302/installer.sh"
 ```
+
+`umask 022` est nécessaire : `su -c` garde l'umask de l'utilisateur (`0002` sous
+Debian), et le dépôt serait créé modifiable par le groupe, ce que `installer.sh`
+refuse. Dans ce cas : `su -c "chmod -R go-w /opt/xti302"`.
 
 Mettre à jour plus tard, depuis un compte administrateur (`ssh -A`) :
 
