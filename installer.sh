@@ -3,9 +3,9 @@
 # installer.sh - Reconstruit toute la configuration sur une VM Debian 13 vierge
 #
 # Relançable sans danger : chaque étape vérifie l'état avant d'agir.
-# Étapes déjà en place : paquets, scripts, comptes (C1, C2), sudo (C3), root et homes (C4).
-# À venir : SSH (S1-S5), fail2ban / nftables / journald (J1-J4), mises à jour (D1),
-#           sauvegarde (B1-B3).
+# Étapes déjà en place : paquets, scripts, comptes (C1, C2), sudo (C3), root et homes (C4),
+#                        SSH (S1-S5).
+# À venir : fail2ban / nftables / journald (J1-J4), mises à jour (D1), sauvegarde (B1-B3).
 #
 # Usage : sudo ./installer.sh   (ou en root : ./installer.sh)
 #
@@ -124,6 +124,35 @@ proteger_homes() {
     info "homes en 700, HOME_MODE et DIR_MODE à 0700"
 }
 
+# S1 à S5 : configuration SSH. Le fichier est mis en place puis toute la
+# configuration est validée par sshd -t AVANT de recharger le service ; si elle
+# est invalide, l'ancien fichier est remis et sshd n'est pas rechargé : la
+# configuration en service reste celle d'avant, et l'accès n'est pas coupé.
+configurer_ssh() {
+    etape "SSH (S1 à S5)"
+    local source="$CONFIG/ssh/sshd_config.d/00-xti302.conf"
+    local dest="/etc/ssh/sshd_config.d/00-xti302.conf"
+    local ancien=""
+
+    if [[ -f "$dest" ]]; then
+        ancien="$(mktemp)"
+        cp -p "$dest" "$ancien"
+    fi
+    install -m 644 -o root -g root "$source" "$dest"
+
+    if ! sshd -t; then
+        if [[ -n "$ancien" ]]; then
+            mv "$ancien" "$dest"
+        else
+            rm -f "$dest"
+        fi
+        erreur "configuration SSH invalide (sshd -t) : ancienne configuration conservée" 5
+    fi
+    rm -f "$ancien"
+    systemctl reload ssh
+    info "$dest installé, validé par sshd -t, service ssh rechargé"
+}
+
 # C4 : le compte root est verrouillé (plus de connexion par mot de passe, ni su)
 verrouiller_root() {
     etape "Compte root (C4)"
@@ -141,6 +170,7 @@ main() {
     configurer_sudo
     verifier_admin_utilisable
     vider_groupe_sudo
+    configurer_ssh
     proteger_homes
     verrouiller_root
     etape "Terminé"
