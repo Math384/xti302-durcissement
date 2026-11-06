@@ -74,6 +74,15 @@ sudo ls /sauvegardes
 sudo ls -l /sauvegardes/*/srv/publications/rapport.pdf
 ```
 
+Attention : le disque contient aussi `lost+found` (créé par ext4 pour `fsck`). Un
+`ls /sauvegardes | tail -n 1` le choisit à la place de la dernière version, car
+`l` est trié après les chiffres. On sélectionne donc explicitement une version
+datée :
+
+```bash
+DERNIERE=$(sudo find /sauvegardes -mindepth 1 -maxdepth 1 -type d -name '20*' | sort | tail -n 1)
+```
+
 Si le fichier a été supprimé ou chiffré (rançongiciel), on choisit la dernière
 version **antérieure** à l'incident : c'est tout l'intérêt des versions datées
 par rapport à une simple copie miroir.
@@ -104,9 +113,12 @@ de la sauvegarde (les fichiers créés depuis seraient alors supprimés).
 
 ### 4.4 Vérifier
 
+Un administrateur n'a pas accès aux répertoires métier (les ACL ne le prévoient
+pas) : les vérifications se font avec `sudo`.
+
 ```bash
-ls -l /srv/publications/rapport.pdf
-getfacl /srv/publications/rapport.pdf        # les ACL doivent être revenues
+sudo ls -l /srv/publications/rapport.pdf
+sudo getfacl /srv/publications/rapport.pdf   # les ACL doivent être revenues
 sudo ./verifier.sh                           # test_B4 restaure aussi un fichier à blanc
 ```
 
