@@ -7,11 +7,11 @@
 #                        SSH (S1-S5), journald, nftables, fail2ban (J1-J3), mises à jour (D1),
 #                        disque et planification de la sauvegarde (B1-B3), services inutiles (D2).
 #
-# Usage : sudo ./installer.sh   (ou en root : ./installer.sh)
+# Usage : sudo /opt/xti302/installer.sh   (dépôt cloné par root, voir README)
 #
 # Codes de sortie :
 #   0 succès | 1 erreur générale | 2 pas root | 5 configuration invalide | 6 garde-fou anti-blocage
-#   7 disque de sauvegarde introuvable ou refusé
+#   7 disque de sauvegarde introuvable ou refusé | 8 dépôt modifiable par un autre que root
 
 set -euo pipefail
 
@@ -30,7 +30,7 @@ GROUPE_ADMINS="admins"
 PAQUETS=(sudo acl openssh-server nftables fail2ban python3-systemd unattended-upgrades rsync)
 
 # Second disque de la VM, réservé aux sauvegardes. Autre nom possible :
-#   sudo DISQUE_SAUVEGARDE=/dev/sdc ./installer.sh
+#   sudo DISQUE_SAUVEGARDE=/dev/sdc /opt/xti302/installer.sh
 DISQUE_SAUVEGARDE="${DISQUE_SAUVEGARDE:-/dev/sdb}"
 
 # D2 : services réseau inutiles sur un serveur, installés quand l'installation de
@@ -48,6 +48,18 @@ erreur() { echo "[ERREUR] $1" >&2; exit "${2:-1}"; }
 
 verifier_root() {
     [[ $EUID -eq 0 ]] || erreur "ce script doit être lancé en root (sudo $0)" 2
+}
+
+# Les scripts lancés en root doivent appartenir à root et n'être modifiables que par
+# lui : sinon le propriétaire du dossier pourrait y glisser ses propres commandes,
+# exécutées en root au prochain lancement. Le dépôt est donc cloné par root dans
+# /opt/xti302 (voir README).
+verifier_depot_protege() {
+    local fautif
+    fautif="$(find "$REPO_DIR" \( ! -user root -o -perm /022 \) -print -quit)"
+    if [[ -n "$fautif" ]]; then
+        erreur "$fautif n'appartient pas à root ou est modifiable par d'autres : clonez le dépôt en root dans /opt/xti302 (voir README)" 8
+    fi
 }
 
 # Liste des comptes du groupe admins : membres secondaires ET comptes dont c'est
@@ -296,6 +308,7 @@ verrouiller_root() {
 
 main() {
     verifier_root
+    verifier_depot_protege
     installer_paquets
     installer_scripts
     creer_comptes

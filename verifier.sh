@@ -6,7 +6,7 @@
 # Ne modifie jamais le système : les seuls fichiers créés sont des fichiers de test
 # dans /srv, supprimés à la fin (trap EXIT), même si le script est interrompu.
 #
-# Usage : sudo ./verifier.sh
+# Usage : sudo /opt/xti302/verifier.sh
 #
 # Codes de sortie : 0 tout est conforme | 1 au moins un test échoue | 2 pas root
 
@@ -274,6 +274,16 @@ test_C3() {
         ok "C3" "le compte support ne peut lancer que analyse_logs.sh"
     else
         ko "C3" "droits sudo de support incorrects : $(echo $regles)"
+    fi
+
+    # Les scripts du dépôt (installer.sh, creer_comptes.sh, verifier.sh) sont lancés en
+    # root : ils doivent appartenir à root et n'être modifiables par personne d'autre
+    local fautif
+    fautif="$(find "$REPO_DIR" \( ! -user root -o -perm /022 \) -print -quit 2>/dev/null)"
+    if [[ -z "$fautif" ]]; then
+        ok "C3" "dépôt $REPO_DIR (scripts lancés en root) : propriété de root, non modifiable par d'autres"
+    else
+        ko "C3" "$fautif n'appartient pas à root ou est modifiable par d'autres (scripts lancés en root)"
     fi
 
     # Le script lancé en root par support ne doit pas être modifiable par lui

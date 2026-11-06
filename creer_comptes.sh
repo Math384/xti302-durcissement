@@ -7,10 +7,11 @@
 #   C2 : répertoires de /srv avec permissions, ACL et ACL par défaut
 #   C4 : répertoires personnels non lisibles par les autres (chmod 700)
 #
-# Usage : sudo ./creer_comptes.sh [chemin/vers/comptes.csv]
+# Usage : sudo /opt/xti302/creer_comptes.sh [chemin/vers/comptes.csv]
 #
 # Codes de sortie :
 #   0 succès | 1 erreur générale | 2 pas root | 3 CSV invalide | 4 dépendance manquante
+#   5 dépôt modifiable par un autre que root
 
 set -euo pipefail
 
@@ -53,6 +54,11 @@ verifier_prerequis() {
     [[ "$(head -n 1 "$CSV" | tr -d '\r')" == "$ENTETE" ]] \
         || erreur "en-tête de $CSV invalide (attendu : $ENTETE)" 3
     command -v setfacl >/dev/null || erreur "setfacl introuvable : apt install acl" 4
+    # Lancé en root : ses fichiers (script, CSV, clés) ne doivent être modifiables que par root
+    local fautif
+    fautif="$(find "$REPO_DIR" \( ! -user root -o -perm /022 \) -print -quit)"
+    [[ -z "$fautif" ]] \
+        || erreur "$fautif n'appartient pas à root ou est modifiable par d'autres : clonez le dépôt en root dans /opt/xti302" 5
 }
 
 # Affiche les lignes utiles du CSV : sans en-tête, sans \r (Windows), sans lignes vides

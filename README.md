@@ -26,13 +26,24 @@ Comptes : `admins` (mathurin, gabriel, teo), `support` (sudo limité à
 
 ## Installer
 
-Sur la VM, depuis le compte créé à l'installation :
+Les scripts sont lancés en root : ils doivent appartenir à root et n'être
+modifiables que par lui. Le dépôt est donc cloné **par root** dans `/opt/xti302`
+(un clone dans un répertoire personnel est refusé par `installer.sh`).
+
+Sur la VM, connecté en SSH avec redirection d'agent (`ssh -A`) depuis le compte créé
+à l'installation, pour que root puisse utiliser la clé GitHub du poste :
 
 ```bash
 su -c "apt install -y git"
-git clone git@github.com:Math384/xti302-durcissement.git ~/projet
-cd ~/projet
-su -c "./installer.sh"          # ou : sudo ./installer.sh si le compte a déjà sudo
+su -c "git clone git@github.com:Math384/xti302-durcissement.git /opt/xti302"
+su -c "/opt/xti302/installer.sh"
+```
+
+Mettre à jour plus tard, depuis un compte administrateur (`ssh -A`) :
+
+```bash
+sudo --preserve-env=SSH_AUTH_SOCK git -C /opt/xti302 pull
+sudo /opt/xti302/installer.sh
 ```
 
 `installer.sh` reconstruit toute la configuration ; il peut être relancé sans
@@ -45,12 +56,12 @@ changé à la première connexion.
 > et tester la connexion d'un administrateur dans un second terminal :
 > `ssh mathurin@<IP de la VM>`.
 
-Disque de sauvegarde sous un autre nom : `sudo DISQUE_SAUVEGARDE=/dev/sdc ./installer.sh`.
+Disque de sauvegarde sous un autre nom : `sudo DISQUE_SAUVEGARDE=/dev/sdc /opt/xti302/installer.sh`.
 
 ## Vérifier
 
 ```bash
-sudo ./verifier.sh
+sudo /opt/xti302/verifier.sh
 ```
 
 Un résultat `[OK]` / `[KO]` par test, puis le bilan ; code de sortie 0 si tout est

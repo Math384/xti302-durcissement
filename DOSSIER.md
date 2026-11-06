@@ -17,7 +17,7 @@ Références ANSSI citées :
 |---|---|---|---|
 | **C1** | `creer_comptes.sh` lit `comptes.csv`, crée les groupes (`groupadd` si absent), crée ou met à jour chaque compte (`useradd` / `usermod`) : relançable sans doublon ni erreur | `test_C1` : chaque compte du CSV existe, avec ses groupes principal et secondaires (13 tests) | SSH R21 (un compte par personne) |
 | **C2** | `/srv/donnees_brutes`, `analyses`, `publications` en `root:root 770`, ACL de groupe et **ACL par défaut** (`setfacl -m` et `-d -m`), remises à zéro à chaque passage | `test_C2` : pour chaque répertoire × groupe, un membre essaie de créer puis de lister (12 tests) ; ACL par défaut présentes ; héritage réel (fichier de `okenobi` lisible par `hsolo`) | BP-028 R50 |
-| **C3** | `/etc/sudoers.d/xti302` (440, validé par `visudo -cf`) : `%admins` tous droits avec mot de passe ; `support` seulement `/usr/local/sbin/analyse_logs.sh` en root ; groupe `sudo` vidé | `test_C3` : fichier, syntaxe, identique au dépôt, chaque admin a `(ALL : ALL) ALL`, une seule règle pour `support`, script non modifiable, **aucun autre compte** n'a sudo | BP-028 R38, R33, R43 (voir partie 2) |
+| **C3** | `/etc/sudoers.d/xti302` (440, validé par `visudo -cf`) : `%admins` tous droits avec mot de passe ; `support` seulement `/usr/local/sbin/analyse_logs.sh` en root ; groupe `sudo` vidé | `test_C3` : fichier, syntaxe, identique au dépôt, chaque admin a `(ALL : ALL) ALL`, une seule règle pour `support`, scripts lancés en root (dépôt `/opt/xti302`, `analyse_logs.sh`) non modifiables, **aucun autre compte** n'a sudo | BP-028 R38, R33, R43 (voir partie 2) |
 | **C4** | `passwd -l root` ; homes en 700, `HOME_MODE 0700` et `DIR_MODE=0700` pour les futurs comptes | `test_C4` : root `L`, tous les homes en `x00`, `HOME_MODE` | BP-028 R50 |
 | **S1** | `PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `AuthenticationMethods publickey` | `test_S1` : 3 options (`sshd -T`) + connexion réelle : le serveur ne propose que `publickey` | SSH R17 |
 | **S2** | `PermitRootLogin no` | `test_S2` | SSH R21 |
@@ -58,8 +58,14 @@ Seul `-u` est gardé, et `LC_ALL=C` rend les sorties analysées indépendantes d
   casserait sudo pour tout le monde. **Garde-fou** : avant de vider le groupe `sudo`
   et de verrouiller root, `installer.sh` vérifie qu'au moins un admin a une clé SSH
   **et** un mot de passe, sinon il s'arrête (code 6).
-- **Scripts appelés en root** dans `/usr/local/sbin`, `root:root 755` : si `support`
-  pouvait modifier `analyse_logs.sh`, il y écrirait `bash` et deviendrait root par sudo.
+- **Scripts appelés en root** : `analyse_logs.sh` et `sauvegarde.sh` sont installés
+  dans `/usr/local/sbin`, `root:root 755` ; si `support` pouvait modifier
+  `analyse_logs.sh`, il y écrirait `bash` et deviendrait root par sudo. Le dépôt
+  lui-même (`installer.sh`, `creer_comptes.sh`, `verifier.sh`) est cloné par root
+  dans `/opt/xti302` : depuis un répertoire personnel, son propriétaire pourrait
+  modifier un script avant qu'un admin le lance en root. `installer.sh` et
+  `creer_comptes.sh` refusent de tourner si un fichier du dépôt n'appartient pas à
+  root ou est modifiable par d'autres, et `verifier.sh` le contrôle (C3).
 - **Mot de passe provisoire des admins** : ils se connectent par clé, mais sudo
   demande leur mot de passe (traçabilité, protection d'une session laissée
   ouverte). `creer_comptes.sh` le fait saisir au clavier (jamais stocké), le
@@ -264,7 +270,7 @@ pas) : les vérifications se font avec `sudo`.
 ```bash
 sudo ls -l /srv/publications/rapport.pdf
 sudo getfacl /srv/publications/rapport.pdf   # les ACL doivent être revenues
-sudo ./verifier.sh                           # test_B4 restaure aussi un fichier à blanc
+sudo /opt/xti302/verifier.sh                 # test_B4 restaure aussi un fichier à blanc
 ```
 
 ### 4.5 Test réalisé (6 novembre 2026)
