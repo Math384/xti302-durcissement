@@ -1,0 +1,6 @@
+// /etc/apt/apt.conf.d/20auto-upgrades - Exigence D1 (copié par installer.sh)
+// Chaque jour : mise à jour de la liste des paquets, puis installation automatique
+// des mises à jour. Les origines autorisées (dépôt debian-security) sont celles de
+// 50unattended-upgrades, fourni par le paquet unattended-upgrades.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";

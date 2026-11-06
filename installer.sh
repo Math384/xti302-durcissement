@@ -4,8 +4,8 @@
 #
 # Relançable sans danger : chaque étape vérifie l'état avant d'agir.
 # Étapes déjà en place : paquets, scripts, comptes (C1, C2), sudo (C3), root et homes (C4),
-#                        SSH (S1-S5).
-# À venir : fail2ban / nftables / journald (J1-J4), mises à jour (D1), sauvegarde (B1-B3).
+#                        SSH (S1-S5), journald, nftables, fail2ban (J1-J3), mises à jour (D1).
+# À venir : sauvegarde (B1-B3), D2, D3.
 #
 # Usage : sudo ./installer.sh   (ou en root : ./installer.sh)
 #
@@ -25,7 +25,8 @@ CONFIG="$REPO_DIR/config"
 SCRIPTS_DIR="/usr/local/sbin"            # scripts appelés par root ou via sudo
 GROUPE_ADMINS="admins"
 
-PAQUETS=(sudo acl openssh-server)
+# python3-systemd : permet à fail2ban de lire journald (backend = systemd)
+PAQUETS=(sudo acl openssh-server nftables fail2ban python3-systemd unattended-upgrades)
 
 # --- Fonctions utilitaires ---------------------------------------------------
 
@@ -153,6 +154,49 @@ configurer_ssh() {
     info "$dest installé, validé par sshd -t, service ssh rechargé"
 }
 
+# J3 : journal persistant (un fichier de complément plutôt que modifier journald.conf)
+configurer_journald() {
+    etape "Journal persistant (J3)"
+    install -D -m 644 -o root -g root "$CONFIG/journald.conf" /etc/systemd/journald.conf.d/xti302.conf
+    systemctl restart systemd-journald
+    journalctl --flush          # recopie sur disque ce qui était encore en mémoire
+    info "journal conservé dans /var/log/journal"
+}
+
+# J2 : pare-feu. Les règles sont vérifiées (nft -c) avant d'être installées, puis
+# chargées tout de suite ; nftables.service les recharge à chaque démarrage.
+configurer_pare_feu() {
+    etape "Pare-feu nftables (J2)"
+    nft -c -f "$CONFIG/nftables.conf" || erreur "règles nftables invalides" 5
+    install -m 755 -o root -g root "$CONFIG/nftables.conf" /etc/nftables.conf
+    systemctl enable nftables >/dev/null 2>&1
+    nft -f /etc/nftables.conf   # ne remplace que la table inet filtre, pas celle de fail2ban
+    info "règles chargées, nftables activé au démarrage"
+}
+
+# J1 : fail2ban. La configuration complète est testée (fail2ban-client -t) ;
+# si elle est invalide, notre fichier est retiré.
+configurer_fail2ban() {
+    etape "fail2ban (J1)"
+    local dest="/etc/fail2ban/jail.d/xti302.conf"
+    install -m 644 -o root -g root "$CONFIG/fail2ban/jail.d/xti302.conf" "$dest"
+    if ! fail2ban-client -t >/dev/null; then
+        rm -f "$dest"
+        erreur "configuration fail2ban invalide (fail2ban-client -t)" 5
+    fi
+    systemctl enable fail2ban >/dev/null 2>&1
+    systemctl restart fail2ban
+    info "prison sshd active"
+}
+
+# D1 : mises à jour de sécurité automatiques
+configurer_maj_auto() {
+    etape "Mises à jour automatiques (D1)"
+    install -m 644 -o root -g root "$CONFIG/apt/20auto-upgrades" /etc/apt/apt.conf.d/20auto-upgrades
+    systemctl enable --now apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1
+    info "unattended-upgrades activé (vérification quotidienne)"
+}
+
 # C4 : le compte root est verrouillé (plus de connexion par mot de passe, ni su)
 verrouiller_root() {
     etape "Compte root (C4)"
@@ -171,6 +215,10 @@ main() {
     verifier_admin_utilisable
     vider_groupe_sudo
     configurer_ssh
+    configurer_journald
+    configurer_pare_feu
+    configurer_fail2ban
+    configurer_maj_auto
     proteger_homes
     verrouiller_root
     etape "Terminé"

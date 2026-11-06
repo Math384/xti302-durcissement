@@ -419,6 +419,143 @@ test_S5() {
     fi
 }
 
+# --- J1 : fail2ban protège SSH -------------------------------------------------
+
+test_J1() {
+    if systemctl is-active --quiet fail2ban && systemctl is-enabled --quiet fail2ban; then
+        ok "J1" "fail2ban actif et lancé au démarrage"
+    else
+        ko "J1" "fail2ban arrêté ou non activé au démarrage"
+    fi
+    if fail2ban-client status sshd >/dev/null 2>&1; then
+        ok "J1" "prison sshd active"
+    else
+        ko "J1" "prison sshd inactive (fail2ban-client status sshd)"
+    fi
+    if fail2ban-client get sshd actions 2>/dev/null | grep -q nftables; then
+        ok "J1" "bannissement par nftables"
+    else
+        ko "J1" "la prison sshd ne bannit pas par nftables"
+    fi
+    if cmp -s /etc/fail2ban/jail.d/xti302.conf "$REPO_DIR/config/fail2ban/jail.d/xti302.conf"; then
+        ok "J1" "jail.d/xti302.conf identique au dépôt"
+    else
+        ko "J1" "/etc/fail2ban/jail.d/xti302.conf absent ou différent du dépôt"
+    fi
+}
+
+# --- J2 : pare-feu nftables ----------------------------------------------------
+
+test_J2() {
+    local regles
+    regles="$(nft list chain inet filtre entree 2>/dev/null)"
+    if grep -q 'policy drop' <<< "$regles"; then
+        ok "J2" "politique par défaut en entrée : drop"
+    else
+        ko "J2" "politique par défaut en entrée : $(grep -o 'policy [a-z]*' <<< "$regles" || echo 'table absente') (attendu : drop)"
+    fi
+    if grep -q 'tcp dport 22 .*accept' <<< "$regles"; then
+        ok "J2" "SSH (22/tcp) autorisé"
+    else
+        ko "J2" "aucune règle n'autorise SSH (22/tcp)"
+    fi
+    if grep -q 'ct state established,related accept' <<< "$regles"; then
+        ok "J2" "connexions établies autorisées"
+    else
+        ko "J2" "les connexions établies ne sont pas autorisées"
+    fi
+    # Survit au redémarrage : le service recharge /etc/nftables.conf, qui doit être le nôtre
+    if systemctl is-enabled --quiet nftables \
+       && cmp -s /etc/nftables.conf "$REPO_DIR/config/nftables.conf"; then
+        ok "J2" "règles rechargées au démarrage (nftables activé, fichier identique au dépôt)"
+    else
+        ko "J2" "nftables non activé au démarrage ou /etc/nftables.conf différent du dépôt"
+    fi
+    if ! grep -qE '^[[:space:]]*flush[[:space:]]+ruleset' /etc/nftables.conf 2>/dev/null; then
+        ok "J2" "le rechargement du pare-feu n'efface pas les règles de fail2ban"
+    else
+        ko "J2" "/etc/nftables.conf contient 'flush ruleset' : il efface les bannissements de fail2ban"
+    fi
+}
+
+# --- J3 : journal persistant ---------------------------------------------------
+
+test_J3() {
+    local stockage
+    # Configuration effective : fichier principal + journald.conf.d, la dernière valeur gagne
+    stockage="$(systemd-analyze cat-config systemd/journald.conf 2>/dev/null \
+                | grep -E '^Storage=' | tail -n 1 | cut -d= -f2)"
+    if [[ "$stockage" == "persistent" ]]; then
+        ok "J3" "journal configuré en Storage=persistent"
+    else
+        ko "J3" "Storage vaut '${stockage:-auto (défaut)}' (attendu : persistent)"
+    fi
+    if find /var/log/journal -name '*.journal' 2>/dev/null | grep -q .; then
+        ok "J3" "journal écrit sur disque dans /var/log/journal"
+    else
+        ko "J3" "aucun fichier de journal dans /var/log/journal"
+    fi
+}
+
+# --- J4 : analyse_logs.sh ------------------------------------------------------
+
+test_J4() {
+    if cmp -s "$SCRIPT_SUPPORT" "$REPO_DIR/analyse_logs.sh"; then
+        ok "J4" "analyse_logs.sh installé, identique au dépôt"
+    else
+        ko "J4" "$SCRIPT_SUPPORT absent ou différent du dépôt"
+    fi
+
+    local sortie code
+    sortie="$("$SCRIPT_SUPPORT" -s 1000000 -H 1 2>&1)"
+    code=$?
+    if (( code == 0 )) && grep -q "Connexions réussies" <<< "$sortie"; then
+        ok "J4" "rapport produit, code de sortie 0 sous le seuil"
+    else
+        ko "J4" "rapport absent ou code de sortie $code sous le seuil (attendu : 0)"
+    fi
+
+    # test_S1 vient de provoquer un échec depuis 127.0.0.1 : avec un seuil de 1, alerte attendue
+    "$SCRIPT_SUPPORT" -s 1 -H 1 >/dev/null 2>&1
+    code=$?
+    if (( code == 1 )); then
+        ok "J4" "code de sortie 1 quand le seuil est dépassé"
+    else
+        ko "J4" "code de sortie $code avec un seuil dépassé (attendu : 1)"
+    fi
+
+    "$SCRIPT_SUPPORT" -s abc >/dev/null 2>&1
+    code=$?
+    if (( code == 2 )); then
+        ok "J4" "argument invalide refusé (code 2)"
+    else
+        ko "J4" "argument invalide accepté (code $code, attendu : 2)"
+    fi
+}
+
+# --- D1 : mises à jour de sécurité automatiques --------------------------------
+
+test_D1() {
+    if dpkg-query -W -f '${Status}' unattended-upgrades 2>/dev/null | grep -q 'install ok installed'; then
+        ok "D1" "paquet unattended-upgrades installé"
+    else
+        ko "D1" "paquet unattended-upgrades absent"
+    fi
+    local conf
+    conf="$(apt-config dump 2>/dev/null)"
+    if grep -q '^APT::Periodic::Update-Package-Lists "1";' <<< "$conf" \
+       && grep -q '^APT::Periodic::Unattended-Upgrade "1";' <<< "$conf"; then
+        ok "D1" "mise à jour quotidienne activée (APT::Periodic)"
+    else
+        ko "D1" "APT::Periodic::Update-Package-Lists / Unattended-Upgrade ne valent pas 1"
+    fi
+    if systemctl is-enabled --quiet apt-daily-upgrade.timer; then
+        ok "D1" "minuteur apt-daily-upgrade activé"
+    else
+        ko "D1" "minuteur apt-daily-upgrade désactivé"
+    fi
+}
+
 # --- Programme principal -----------------------------------------------------
 
 main() {
@@ -436,7 +573,12 @@ main() {
     test_S3
     test_S4
     test_S5
-    # À venir : test_J1..J4, test_B1..B4, test_D1..D3
+    test_J1
+    test_J2
+    test_J3
+    test_J4
+    test_D1
+    # À venir : test_B1..B4, test_D2, test_D3
     echo "--- $NB_OK / $NB_TESTS tests réussis"
     if (( NB_OK == NB_TESTS )); then
         exit 0
