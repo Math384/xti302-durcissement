@@ -3,7 +3,8 @@
 Contexte C - Laboratoire BioLab. Groupe : Mathurin, Gabriel, Teo.
 
 Résultat : sur la VM reconstruite depuis le snapshot vierge par `installer.sh`,
-`verifier.sh` réussit **97 tests sur 97**.
+`verifier.sh` réussit tous ses tests (**98 sur 98** depuis l'ajout du contrôle du
+dépôt `/opt/xti302`).
 
 Références ANSSI citées :
 - **BP-028** : *Recommandations de configuration d'un système GNU/Linux*, v2.0
