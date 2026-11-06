@@ -4,13 +4,14 @@
 #
 # Relançable sans danger : chaque étape vérifie l'état avant d'agir.
 # Étapes déjà en place : paquets, scripts, comptes (C1, C2), sudo (C3), root et homes (C4),
-#                        SSH (S1-S5), journald, nftables, fail2ban (J1-J3), mises à jour (D1).
-# À venir : sauvegarde (B1-B3), D2, D3.
+#                        SSH (S1-S5), journald, nftables, fail2ban (J1-J3), mises à jour (D1),
+#                        disque et planification de la sauvegarde (B1-B3).
 #
 # Usage : sudo ./installer.sh   (ou en root : ./installer.sh)
 #
 # Codes de sortie :
 #   0 succès | 1 erreur générale | 2 pas root | 5 configuration invalide | 6 garde-fou anti-blocage
+#   7 disque de sauvegarde introuvable ou refusé
 
 set -euo pipefail
 
@@ -26,7 +27,13 @@ SCRIPTS_DIR="/usr/local/sbin"            # scripts appelés par root ou via sudo
 GROUPE_ADMINS="admins"
 
 # python3-systemd : permet à fail2ban de lire journald (backend = systemd)
-PAQUETS=(sudo acl openssh-server nftables fail2ban python3-systemd unattended-upgrades)
+PAQUETS=(sudo acl openssh-server nftables fail2ban python3-systemd unattended-upgrades rsync)
+
+# Second disque de la VM, réservé aux sauvegardes. Autre nom possible :
+#   sudo DISQUE_SAUVEGARDE=/dev/sdc ./installer.sh
+DISQUE_SAUVEGARDE="${DISQUE_SAUVEGARDE:-/dev/sdb}"
+ETIQUETTE_SAUVEGARDE="sauvegardes"
+POINT_MONTAGE="/sauvegardes"
 
 # --- Fonctions utilitaires ---------------------------------------------------
 
@@ -62,8 +69,11 @@ installer_paquets() {
 # s'il pouvait le modifier, il lui suffirait d'y écrire "bash" pour devenir root.
 installer_scripts() {
     etape "Scripts dans $SCRIPTS_DIR"
-    install -m 755 -o root -g root "$REPO_DIR/analyse_logs.sh" "$SCRIPTS_DIR/analyse_logs.sh"
-    info "analyse_logs.sh installé (root:root, 755)"
+    local script
+    for script in analyse_logs.sh sauvegarde.sh; do
+        install -m 755 -o root -g root "$REPO_DIR/$script" "$SCRIPTS_DIR/$script"
+        info "$script installé (root:root, 755)"
+    done
 }
 
 # C1, C2 : comptes, groupes, clés, /srv
@@ -197,6 +207,63 @@ configurer_maj_auto() {
     info "unattended-upgrades activé (vérification quotidienne)"
 }
 
+# B1, B3 : second disque monté sur /sauvegardes, accessible aux seuls admins.
+# Relançable sans danger : le disque n'est formaté QUE s'il ne contient aucun
+# système de fichiers. Un disque qui contient déjà nos sauvegardes (étiquette
+# "sauvegardes") est réutilisé tel quel ; tout autre contenu arrête le script.
+preparer_disque() {
+    etape "Disque de sauvegarde (B1, B3)"
+    local disque="$DISQUE_SAUVEGARDE" uuid
+
+    [[ -b "$disque" ]] || erreur "disque $disque introuvable (lsblk pour le trouver)" 7
+    # Garde-fous : jamais le disque système, jamais un disque partitionné
+    if lsblk -n -o MOUNTPOINT "$disque" | grep -qx '/'; then
+        erreur "$disque porte le système : refus de l'utiliser" 7
+    fi
+    if lsblk -n -o TYPE "$disque" | grep -qx part; then
+        erreur "$disque contient des partitions : il n'est pas touché" 7
+    fi
+
+    if ! blkid "$disque" >/dev/null 2>&1; then
+        mkfs.ext4 -q -L "$ETIQUETTE_SAUVEGARDE" "$disque"
+        info "$disque vierge : formaté en ext4 (étiquette $ETIQUETTE_SAUVEGARDE)"
+    elif [[ "$(blkid -o value -s LABEL "$disque")" != "$ETIQUETTE_SAUVEGARDE" ]]; then
+        erreur "$disque contient déjà un autre système de fichiers : il n'est pas touché" 7
+    else
+        info "$disque déjà préparé : réutilisé sans formatage (sauvegardes conservées)"
+    fi
+
+    # Montage permanent par UUID (le nom sdb peut changer d'un démarrage à l'autre).
+    # nodev,nosuid,noexec : rien ne peut être exécuté depuis les sauvegardes ;
+    # nofail : la machine démarre même si le disque est absent.
+    uuid="$(blkid -o value -s UUID "$disque")"
+    install -d -m 750 -o root -g root "$POINT_MONTAGE"
+    if ! grep -q "^UUID=$uuid " /etc/fstab; then
+        echo "UUID=$uuid $POINT_MONTAGE ext4 defaults,nodev,nosuid,noexec,nofail 0 2" >> /etc/fstab
+        info "ligne ajoutée à /etc/fstab"
+    fi
+    systemctl daemon-reload
+    if ! mountpoint -q "$POINT_MONTAGE"; then
+        mount "$POINT_MONTAGE"
+    fi
+
+    # B3 : appliqué APRÈS le montage, sur la racine du disque elle-même
+    chown root:"$GROUPE_ADMINS" "$POINT_MONTAGE"
+    chmod 750 "$POINT_MONTAGE"
+    info "$POINT_MONTAGE monté, root:$GROUPE_ADMINS 750"
+}
+
+# B2 : sauvegarde quotidienne par un timer systemd, et une première sauvegarde tout de suite
+configurer_sauvegarde() {
+    etape "Planification de la sauvegarde (B2)"
+    install -m 644 -o root -g root "$CONFIG/systemd/sauvegarde.service" /etc/systemd/system/sauvegarde.service
+    install -m 644 -o root -g root "$CONFIG/systemd/sauvegarde.timer" /etc/systemd/system/sauvegarde.timer
+    systemctl daemon-reload
+    systemctl enable --now sauvegarde.timer >/dev/null 2>&1
+    systemctl start sauvegarde.service
+    info "timer actif, première sauvegarde faite (journalctl -t sauvegarde)"
+}
+
 # C4 : le compte root est verrouillé (plus de connexion par mot de passe, ni su)
 verrouiller_root() {
     etape "Compte root (C4)"
@@ -219,6 +286,8 @@ main() {
     configurer_pare_feu
     configurer_fail2ban
     configurer_maj_auto
+    preparer_disque
+    configurer_sauvegarde
     proteger_homes
     verrouiller_root
     etape "Terminé"

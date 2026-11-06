@@ -26,6 +26,11 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CSV="$REPO_DIR/comptes.csv"
 GROUPE_ADMINS="admins"
 SCRIPT_SUPPORT="/usr/local/sbin/analyse_logs.sh"
+SCRIPT_SAUVEGARDE="/usr/local/sbin/sauvegarde.sh"
+SAUVEGARDES="/sauvegardes"
+GARDER=14                                   # identique à sauvegarde.sh
+FORMAT_VERSION='^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}$'
+LISTE_SUID="$REPO_DIR/config/suid_attendus.txt"
 
 REPERTOIRES=(/srv/donnees_brutes /srv/analyses /srv/publications)
 GROUPES_METIER=(technique chercheurs doctorants invite)
@@ -43,6 +48,7 @@ declare -A DROITS=(
 NB_OK=0
 NB_TESTS=0
 FICHIERS_TEST=()
+DOSSIERS_TEST=()
 
 # --- Affichage ---------------------------------------------------------------
 
@@ -70,6 +76,9 @@ libelle() {
 nettoyer() {
     if (( ${#FICHIERS_TEST[@]} > 0 )); then
         rm -f "${FICHIERS_TEST[@]}"
+    fi
+    if (( ${#DOSSIERS_TEST[@]} > 0 )); then
+        rm -rf "${DOSSIERS_TEST[@]}"
     fi
 }
 trap nettoyer EXIT
@@ -556,6 +565,202 @@ test_D1() {
     fi
 }
 
+# --- B1 à B4 : sauvegarde --------------------------------------------------------
+
+# Versions datées présentes, de la plus ancienne à la plus récente
+versions_sauvegarde() {
+    find "$SAUVEGARDES" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
+        | grep -E "$FORMAT_VERSION" | sort
+}
+
+test_B1() {
+    # Disque séparé : la source du montage /sauvegardes n'est pas celle de /
+    if mountpoint -q "$SAUVEGARDES" \
+       && [[ "$(findmnt -n -o SOURCE "$SAUVEGARDES")" != "$(findmnt -n -o SOURCE /)" ]]; then
+        ok "B1" "$SAUVEGARDES est un disque séparé, monté ($(findmnt -n -o SOURCE "$SAUVEGARDES"))"
+    else
+        ko "B1" "$SAUVEGARDES n'est pas monté sur un disque séparé"
+    fi
+    if cmp -s "$SCRIPT_SAUVEGARDE" "$REPO_DIR/sauvegarde.sh"; then
+        ok "B1" "sauvegarde.sh installé, identique au dépôt"
+    else
+        ko "B1" "$SCRIPT_SAUVEGARDE absent ou différent du dépôt"
+    fi
+
+    local versions nb derniere avant
+    mapfile -t versions < <(versions_sauvegarde)
+    nb=${#versions[@]}
+    if (( nb == 0 )); then
+        ko "B1" "aucune version datée dans $SAUVEGARDES"
+        return
+    fi
+    derniere="$SAUVEGARDES/${versions[nb - 1]}"
+    if [[ -d "$derniere/etc" && -d "$derniere/srv" ]]; then
+        ok "B1" "$nb version(s) datée(s), dernière : ${versions[nb - 1]} (contient /etc et /srv)"
+    else
+        ko "B1" "la dernière version ne contient pas /etc et /srv"
+    fi
+
+    # Incrémental : un fichier inchangé est le MÊME fichier (même inode) dans deux versions
+    if (( nb >= 2 )); then
+        avant="$SAUVEGARDES/${versions[nb - 2]}"
+        if [[ "$(stat -c %i "$derniere/etc/hostname")" == "$(stat -c %i "$avant/etc/hostname")" ]]; then
+            ok "B1" "incrémentale : fichier inchangé non recopié (même inode dans 2 versions)"
+        else
+            ko "B1" "les fichiers inchangés sont recopiés (--link-dest inopérant ?)"
+        fi
+    else
+        ko "B1" "une seule version : lancez une 2e sauvegarde pour vérifier l'incrémental"
+    fi
+
+    if getfacl -p "$derniere/srv/publications" 2>/dev/null | grep -q '^default:group:invite:'; then
+        ok "B1" "droits et ACL conservés dans la sauvegarde"
+    else
+        ko "B1" "les ACL de /srv/publications ne sont pas dans la sauvegarde"
+    fi
+
+    if (( nb <= GARDER )); then
+        ok "B1" "rotation : $nb version(s) gardée(s), $GARDER au maximum"
+    else
+        ko "B1" "$nb versions présentes, plus que les $GARDER prévues : rotation inopérante"
+    fi
+}
+
+test_B2() {
+    if systemctl is-enabled --quiet sauvegarde.timer && systemctl is-active --quiet sauvegarde.timer; then
+        ok "B2" "sauvegarde planifiée (sauvegarde.timer actif)"
+    else
+        ko "B2" "sauvegarde.timer inactif ou non activé"
+    fi
+    if cmp -s /etc/systemd/system/sauvegarde.timer "$REPO_DIR/config/systemd/sauvegarde.timer" \
+       && cmp -s /etc/systemd/system/sauvegarde.service "$REPO_DIR/config/systemd/sauvegarde.service"; then
+        ok "B2" "unités sauvegarde.service et .timer identiques au dépôt"
+    else
+        ko "B2" "unités systemd de sauvegarde absentes ou différentes du dépôt"
+    fi
+    if journalctl -q --no-pager -t sauvegarde 2>/dev/null | grep -q 'fin : version'; then
+        ok "B2" "exécutions journalisées (journalctl -t sauvegarde)"
+    else
+        ko "B2" "aucune exécution réussie dans le journal (journalctl -t sauvegarde)"
+    fi
+}
+
+test_B3() {
+    if [[ "$(stat -c '%U:%G %a' "$SAUVEGARDES" 2>/dev/null)" == "root:$GROUPE_ADMINS 750" ]]; then
+        ok "B3" "$SAUVEGARDES : root:$GROUPE_ADMINS 750"
+    else
+        ko "B3" "$SAUVEGARDES : $(stat -c '%U:%G %a' "$SAUVEGARDES" 2>/dev/null) (attendu : root:$GROUPE_ADMINS 750)"
+    fi
+    local user admin
+    user="$(premier_membre chercheurs)"
+    if ! peut_lister "$user" "$SAUVEGARDES"; then
+        ok "B3" "un utilisateur métier ($user) ne peut pas lire les sauvegardes"
+    else
+        ko "B3" "$user (non admin) peut lire $SAUVEGARDES"
+    fi
+    admin="$(membres_admins | head -n 1)"
+    if [[ -n "$admin" ]] && peut_lister "$admin" "$SAUVEGARDES"; then
+        ok "B3" "un administrateur ($admin) peut lire les sauvegardes"
+    else
+        ko "B3" "les administrateurs ne peuvent pas lire $SAUVEGARDES"
+    fi
+}
+
+# B4 : restauration réelle d'un fichier, dans un dossier temporaire (le système n'est pas touché)
+test_B4() {
+    local derniere temp
+    derniere="$(versions_sauvegarde | tail -n 1)"
+    temp="$(mktemp -d)"
+    DOSSIERS_TEST+=("$temp")
+    if [[ -n "$derniere" ]] \
+       && rsync -aAX "$SAUVEGARDES/$derniere/etc/hostname" "$temp/" 2>/dev/null \
+       && cmp -s "$temp/hostname" /etc/hostname; then
+        ok "B4" "restauration d'un fichier depuis la version $derniere réussie"
+    else
+        ko "B4" "impossible de restaurer /etc/hostname depuis la dernière version"
+    fi
+    if grep -qi 'restauration' "$REPO_DIR/DOSSIER.md" 2>/dev/null; then
+        ok "B4" "procédure de restauration documentée dans DOSSIER.md"
+    else
+        ko "B4" "procédure de restauration absente de DOSSIER.md"
+    fi
+}
+
+# --- D2 : seul SSH est joignable depuis le réseau --------------------------------
+
+test_D2() {
+    # Sockets en écoute hors boucle locale : "adresse:port processus"
+    local local_ proc nom port inattendus="" ssh_ok=0
+    while read -r local_ proc; do
+        [[ -n "$local_" ]] || continue
+        nom="$(grep -o '"[^"]*"' <<< "$proc" | head -n 1 | tr -d '"')"
+        port="${local_##*:}"
+        case "$nom:$port" in
+            sshd:22)               ssh_ok=1 ;;
+            dhcpcd:68|dhcpcd:546)  ;;    # client DHCP (IPv4 / IPv6) : justifié dans le dossier
+            *)                     inattendus+=" ${nom:-?}($local_)" ;;
+        esac
+    done < <(ss -H -tulpn 2>/dev/null | awk '{ print $5, $7 }' | grep -vE '^(127\.|\[::1\]|::1)')
+
+    if (( ssh_ok )); then
+        ok "D2" "sshd écoute sur le port 22"
+    else
+        ko "D2" "sshd n'écoute pas sur le port 22"
+    fi
+    if [[ -z "$inattendus" ]]; then
+        ok "D2" "aucun autre service en écoute sur le réseau (ss -tulpn)"
+    else
+        ko "D2" "services en écoute non prévus :$inattendus"
+    fi
+}
+
+# --- D3 : fichiers modifiables par tous, SUID ------------------------------------
+
+# Points de montage des vrais systèmes de fichiers (sur disque). On ne parcourt ni
+# /proc, /sys, /run (virtuels) ; find -xdev ne déborde pas d'un disque à l'autre.
+systemes_de_fichiers() {
+    findmnt -rn -o TARGET -t ext4,ext3,ext2,xfs,btrfs,vfat
+}
+
+test_D3() {
+    local fs fichiers="" dossiers="" suid=""
+    while read -r fs; do
+        # -type f / -type d : les liens symboliques (toujours en 777) sont ignorés
+        fichiers+="$(find "$fs" -xdev -type f -perm -0002 2>/dev/null)"$'\n'
+        dossiers+="$(find "$fs" -xdev -type d -perm -0002 \
+                        ! -path /tmp ! -path /var/tmp ! -path /dev/shm 2>/dev/null)"$'\n'
+        suid+="$(find "$fs" -xdev -type f -perm -4000 2>/dev/null)"$'\n'
+    done < <(systemes_de_fichiers)
+    fichiers="$(grep -v '^$' <<< "$fichiers")"
+    dossiers="$(grep -v '^$' <<< "$dossiers")"
+    suid="$(grep -v '^$' <<< "$suid" | sort -u)"
+
+    if [[ -z "$fichiers" ]]; then
+        ok "D3" "aucun fichier modifiable par tous"
+    else
+        ko "D3" "fichiers modifiables par tous : $(echo $fichiers)"
+    fi
+    if [[ -z "$dossiers" ]]; then
+        ok "D3" "aucun répertoire modifiable par tous hors /tmp et /var/tmp"
+    else
+        ko "D3" "répertoires modifiables par tous : $(echo $dossiers)"
+    fi
+
+    # SUID : comparaison avec la liste expliquée dans le dossier (config/suid_attendus.txt)
+    if [[ ! -r "$LISTE_SUID" ]]; then
+        ko "D3" "liste de référence $LISTE_SUID absente"
+        return
+    fi
+    local attendus nouveaux
+    attendus="$(grep -vE '^[[:space:]]*(#|$)' "$LISTE_SUID" | sort -u)"
+    nouveaux="$(comm -23 <(echo "$suid") <(echo "$attendus") | grep -v '^$')"
+    if [[ -z "$nouveaux" ]]; then
+        ok "D3" "$(grep -c . <<< "$suid") fichiers SUID, tous listés et expliqués"
+    else
+        ko "D3" "fichiers SUID non prévus : $(echo $nouveaux)"
+    fi
+}
+
 # --- Programme principal -----------------------------------------------------
 
 main() {
@@ -577,8 +782,13 @@ main() {
     test_J2
     test_J3
     test_J4
+    test_B1
+    test_B2
+    test_B3
+    test_B4
     test_D1
-    # À venir : test_B1..B4, test_D2, test_D3
+    test_D2
+    test_D3
     echo "--- $NB_OK / $NB_TESTS tests réussis"
     if (( NB_OK == NB_TESTS )); then
         exit 0

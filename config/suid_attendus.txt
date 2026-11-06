@@ -1,0 +1,6 @@
+# config/suid_attendus.txt - Exigence D3
+# Fichiers SUID présents sur la VM, chacun expliqué dans DOSSIER.md.
+# verifier.sh signale tout fichier SUID absent de cette liste.
+# Liste générée sur la VM (voir README / DOSSIER), puis relue une par une :
+#   findmnt -rn -o TARGET -t ext4,ext3,ext2,xfs,btrfs,vfat \
+#     | while read -r fs; do sudo find "$fs" -xdev -type f -perm -4000; done | sort -u

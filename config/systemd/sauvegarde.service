@@ -1,0 +1,13 @@
+# /etc/systemd/system/sauvegarde.service - Exigence B2 (copié par installer.sh)
+# Lancé par sauvegarde.timer ; à la main : sudo systemctl start sauvegarde.service
+[Unit]
+Description=Sauvegarde incrémentale de /srv et /etc
+# Ne démarre que si le disque de sauvegarde est monté
+RequiresMountsFor=/sauvegardes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/sauvegarde.sh
+# Priorité basse : la sauvegarde ne ralentit pas les utilisateurs
+Nice=10
+IOSchedulingClass=idle
